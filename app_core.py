@@ -6,6 +6,41 @@ from typing import Optional
 
 DEFAULT_PACKAGE_NAME = "com.bingo.cruise.free.best.top.game"
 DEFAULT_CLIENT_LOGGING_REMOTE_TEMPLATE = "/sdcard/Android/data/{package}/files/client_logging_temp"
+TEXT_ENCODING = "gb18030"
+LEGACY_TEXT_ENCODINGS = ("utf-8-sig", "utf-8")
+
+
+def read_text_file(path: Path) -> str:
+    try:
+        return Path(path).read_text(encoding=TEXT_ENCODING)
+    except UnicodeDecodeError:
+        for encoding in LEGACY_TEXT_ENCODINGS:
+            try:
+                return Path(path).read_text(encoding=encoding)
+            except UnicodeDecodeError:
+                continue
+        raise
+
+
+def write_text_file(path: Path, text: str):
+    Path(path).write_text(text, encoding=TEXT_ENCODING)
+
+
+def load_json_file(path: Path):
+    path = Path(path)
+    last_error = None
+    for encoding in (TEXT_ENCODING, *LEGACY_TEXT_ENCODINGS):
+        try:
+            return json.loads(path.read_text(encoding=encoding))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            last_error = error
+    raise last_error
+
+
+def save_json_file(path: Path, data):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_text_file(path, json.dumps(data, ensure_ascii=False, indent=2))
 
 
 class RollingLogBuffer:
@@ -173,8 +208,7 @@ class AppConfig:
     def save(self):
         if not self.config_path:
             return
-        self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        self.config_path.write_text(json.dumps(self.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        save_json_file(self.config_path, self.to_dict())
 
 
 def default_app_dir(
@@ -192,7 +226,7 @@ def load_app_config(config_path: Optional[Path] = None, app_dir: Optional[Path] 
     base_dir = Path(app_dir) if app_dir is not None else default_app_dir()
     path = Path(config_path) if config_path is not None else base_dir / "data" / "config.json"
     if path.exists():
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = load_json_file(path)
         config = AppConfig.from_dict(data, app_dir=base_dir, config_path=path)
         if config.to_dict() != data:
             config.save()

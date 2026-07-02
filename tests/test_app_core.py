@@ -10,11 +10,13 @@ def rooted_path(*parts):
 from app_core import (
     AppConfig,
     RollingLogBuffer,
+    TEXT_ENCODING,
     client_logging_remote_path,
     default_device_aliases_path,
     default_protocols_path,
     default_log_dir,
     default_workspace_dir,
+    load_json_file,
     load_app_config,
 )
 
@@ -141,12 +143,29 @@ class AppConfigTest(unittest.TestCase):
             )
 
             config = load_app_config(config_path=config_path, app_dir=Path(tmp))
-            saved = json.loads(config_path.read_text(encoding="utf-8"))
+            saved = load_json_file(config_path)
 
             self.assertEqual(config.adb_connect_targets(), [])
             self.assertNotIn("adb_scan_hosts", saved)
             self.assertNotIn("adb_scan_ports", saved)
             self.assertEqual(saved["adb_connect_addresses"], [])
+
+    def test_saves_config_as_gb18030(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "data" / "config.json"
+            config = AppConfig(
+                app_dir=Path(tmp),
+                package_name="com.example.game",
+                output_dir_value="输出",
+                config_path=config_path,
+            )
+
+            config.save()
+
+            raw = config_path.read_bytes()
+            self.assertIn("输出", raw.decode(TEXT_ENCODING))
+            with self.assertRaises(UnicodeDecodeError):
+                raw.decode("utf-8")
 
 
 if __name__ == "__main__":

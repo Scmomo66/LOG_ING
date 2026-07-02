@@ -1,4 +1,4 @@
-'\nAndroid Log查看工具 - v12.0\n修复：滚动条、状态管理、协议替换\n新增：英文搜索协议\n'
+﻿'\nAndroid Log查看工具 - v12.0\n修复：滚动条、状态管理、协议替换\n新增：英文搜索协议\n'
 
 import sys
 import subprocess
@@ -12,9 +12,13 @@ from pathlib import Path
 
 from app_core import (
     RollingLogBuffer,
+    TEXT_ENCODING,
     default_device_aliases_path,
     default_protocols_path,
+    load_json_file,
     load_app_config,
+    save_json_file,
+    write_text_file,
 )
 
 from PyQt6.QtWidgets import *
@@ -240,13 +244,12 @@ class ProtocolManager:
     def load(self):
         try:
             if self.storage_path.exists():
-                self.protocols = json.loads(self.storage_path.read_text(encoding='utf-8'))
+                self.protocols = load_json_file(self.storage_path)
         except (OSError, json.JSONDecodeError):
             self.protocols = {}
     
     def save(self):
-        self.storage_path.parent.mkdir(parents=True, exist_ok=True)
-        self.storage_path.write_text(json.dumps(self.protocols, ensure_ascii=False, indent=2), encoding='utf-8')
+        save_json_file(self.storage_path, self.protocols)
     
     def add(self, cn: str, en: str):
         if cn and en:
@@ -281,13 +284,12 @@ class DeviceAliasManager:
     def load(self):
         try:
             if self.storage_path.exists():
-                self.aliases = json.loads(self.storage_path.read_text(encoding='utf-8'))
+                self.aliases = load_json_file(self.storage_path)
         except (OSError, json.JSONDecodeError):
             self.aliases = {}
     
     def save(self):
-        self.storage_path.parent.mkdir(parents=True, exist_ok=True)
-        self.storage_path.write_text(json.dumps(self.aliases, ensure_ascii=False, indent=2), encoding='utf-8')
+        save_json_file(self.storage_path, self.aliases)
     
     def get(self, serial: str) -> str:
         return self.aliases.get(serial, "")
@@ -432,7 +434,7 @@ class ProtocolDialog(QDialog):
             del_btn.clicked.connect(lambda _, c=cn: self.delete_protocol(c))
             self.table.setCellWidget(row, 2, del_btn)
         
-        self.count_label.setText(f"鍏?{len(protocols)} 鏉?")
+        self.count_label.setText(f"共 {len(protocols)} 条")
     
     def on_double_click(self, index):
         '双击编辑'
@@ -477,7 +479,7 @@ class ProtocolDialog(QDialog):
         path, _ = QFileDialog.getOpenFileName(self, '导入', "", "JSON (*.json)")
         if path:
             try:
-                data = json.loads(Path(path).read_text(encoding='utf-8'))
+                data = load_json_file(Path(path))
                 for cn, en in data.items():
                     self.manager.add(cn, en)
                 self.load_data()
@@ -487,7 +489,7 @@ class ProtocolDialog(QDialog):
     def export_data(self):
         path, _ = QFileDialog.getSaveFileName(self, '导出', "protocols.json", "JSON (*.json)")
         if path:
-            Path(path).write_text(json.dumps(self.manager.get_all(), ensure_ascii=False, indent=2), encoding='utf-8')
+            save_json_file(Path(path), self.manager.get_all())
 
 
 class ProtocolCompleter(QCompleter):
@@ -546,13 +548,16 @@ class ProtocolCompleter(QCompleter):
     
     def get_english(self, display_text: str) -> str:
         '从下拉选项获取英文协议名'
+        display_text = display_text.strip()
         for display, en in self.results:
             if display == display_text:
                 return en
         # ??????????????
-        for separator in (" → ", " ??"):
+        if "→" in display_text:
+            return display_text.split("→", 1)[-1].strip()
+        for separator in (" → ", " -> "):
             if separator in display_text:
-                return display_text.split(separator)[-1]
+                return display_text.split(separator)[-1].strip()
 
 
 # ==================== 鏃ュ織鎶撳彇 ====================
@@ -579,7 +584,7 @@ class LogFetcher(QThread):
             self.process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, encoding='utf-8', errors='ignore', bufsize=1,
+                text=True, encoding=TEXT_ENCODING, errors='replace', bufsize=1,
                 **no_console_subprocess_kwargs(),
             )
             self.start()
@@ -593,7 +598,7 @@ class LogFetcher(QThread):
             try:
                 self.process.terminate()
             except Exception as e:
-                self.error_occurred.emit(f"?? adb logcat ??: {e}")
+                self.error_occurred.emit(f"停止 adb logcat 失败: {e}")
         self.pid_filter = None
 
     def kill_process(self):
@@ -650,8 +655,8 @@ class ClientLoggingPuller(QThread):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                encoding='utf-8',
-                errors='ignore',
+                encoding=TEXT_ENCODING,
+                errors='replace',
                 **no_console_subprocess_kwargs(),
             )
             stdout, stderr = self.process.communicate(timeout=60)
@@ -722,8 +727,8 @@ class DeviceRefreshWorker(QThread):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                encoding='utf-8',
-                errors='ignore',
+                encoding=TEXT_ENCODING,
+                errors='replace',
                 **no_console_subprocess_kwargs(),
             )
         except (OSError, subprocess.SubprocessError) as e:
@@ -1199,19 +1204,19 @@ class MainWindow(QMainWindow):
         try:
             result = subprocess.run(
                 ['adb', '-s', self.current_device, 'shell', 'pidof', package],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True, text=True, encoding=TEXT_ENCODING, errors='replace', timeout=5,
                 **no_console_subprocess_kwargs(),
             )
             pid = result.stdout.strip()
             if pid:
                 self.pid_label.setText(f"PID: {pid}")
-                self.status_label.setText(f"??? PID: {pid}")
+                self.status_label.setText(f"已获取 PID: {pid}")
             else:
                 self.pid_label.setText('未找到进程')
                 QMessageBox.warning(self, '提示', f"未找到包名 {package} 对应的进程\n请确认应用已启动")
         except Exception as e:
             self.pid_label.setText('获取失败')
-            QMessageBox.warning(self, '??', f"?? PID ??: {e}")
+            QMessageBox.warning(self, '错误', f"获取 PID 失败: {e}")
 
     def create_search_bar(self):
         frame = QFrame()
@@ -1353,7 +1358,7 @@ class MainWindow(QMainWindow):
 
         self.search_table = QTableWidget()
         self.search_table.setColumnCount(3)
-        self.search_table.setHorizontalHeaderLabels(["??", "??", "??"])
+        self.search_table.setHorizontalHeaderLabels(["行号", "时间", "内容"])
         self.search_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.search_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.search_table.doubleClicked.connect(self.on_search_clicked)
@@ -1373,7 +1378,7 @@ class MainWindow(QMainWindow):
         self.status_bar.setObjectName("statusBar")
         self.setStatusBar(self.status_bar)
         self.status_label = QLabel('就绪')
-        self.count_label = QLabel(f"??: 0 / {self.MAX_LOG_LINES}")
+        self.count_label = QLabel(f"日志: 0 / {self.MAX_LOG_LINES}")
         self.status_bar.addWidget(self.status_label)
         self.status_bar.addPermanentWidget(self.count_label)
 
@@ -1593,7 +1598,7 @@ class MainWindow(QMainWindow):
             self.current_device = self.device_combo.currentData()
             alias = self.device_manager.get(self.current_device)
             suffix = f" · 已连接 {connected_count} 个配置地址" if connected_count else ""
-            self.status_label.setText(f"??: {alias or self.current_device}{suffix}")
+            self.status_label.setText(f"设备: {alias or self.current_device}{suffix}")
             return
 
         self.current_device = None
@@ -1673,15 +1678,15 @@ class MainWindow(QMainWindow):
             self.toggle_btn.setText('停止抓取')
             
             if pid:
-                self.status_label.setText(f"鎶撳彇涓?.. (PID: {pid})")
+                self.status_label.setText(f"抓取中... (PID: {pid})")
             else:
-                self.status_label.setText("鎶撳彇涓?..")
+                self.status_label.setText("抓取中...")
 
     def on_fetch_error(self, message):
         if self.is_closing:
             return
         self.toggle_btn.setText('开始抓取')
-        self.status_label.setText(f"鎶撳彇澶辫触: {message}")
+        self.status_label.setText(f"抓取失败: {message}")
 
     def on_fetch_finished(self):
         if self.is_closing:
@@ -1722,9 +1727,9 @@ class MainWindow(QMainWindow):
 
     def _save_log_async(self, path, lines):
         try:
-            path.write_text('\n'.join(lines), encoding='utf-8')
+            write_text_file(path, '\n'.join(lines))
         except Exception as e:
-            print(f"淇濆瓨澶辫触: {e}")
+            print(f"保存失败: {e}")
 
     def force_update_display(self):
         """强制更新显示（忽略 freeze 状态）"""
@@ -1745,7 +1750,7 @@ class MainWindow(QMainWindow):
 
         if not self.log_lines:
             self.log_count_label.setText('0 行')
-            self.count_label.setText(f"鏃ュ織: 0 / {self.MAX_LOG_LINES}")
+            self.count_label.setText(f"日志: 0 / {self.MAX_LOG_LINES}")
             return
 
         # ???????????????
@@ -1792,9 +1797,9 @@ class MainWindow(QMainWindow):
         shown = total_visible if shown is None else shown
         self.log_count_label.setText(f"{shown} 行" if shown == total_visible else f"{shown}/{total_visible} 行")
         if dropped:
-            self.count_label.setText(f"??: {total_visible} / {self.MAX_LOG_LINES} ? ?? {total_seen} ? ??? {dropped}")
+            self.count_label.setText(f"日志: {total_visible} / {self.MAX_LOG_LINES} · 已接收 {total_seen} · 已丢弃 {dropped}")
         else:
-            self.count_label.setText(f"??: {total_visible} / {self.MAX_LOG_LINES}")
+            self.count_label.setText(f"日志: {total_visible} / {self.MAX_LOG_LINES}")
 
     def get_filtered(self):
         lines, mapping = [], []
@@ -1818,15 +1823,13 @@ class MainWindow(QMainWindow):
         return lines, mapping
 
     def on_protocol_selected(self, selected_text: str):
-        '协议库选项被点击时，只填入英文协议名'
-        # selected_text ??? ??? -> ???
-        en = selected_text
-        for separator in (" → ", " ??"):
-            if separator in selected_text:
-                en = selected_text.split(separator)[-1]
-                break
-        # ??????? Qt ????????
-    
+        """Keep the protocol display text visible and search by its English name."""
+        was_blocked = self.search_input.blockSignals(True)
+        self.search_input.setText(selected_text)
+        self.search_input.blockSignals(was_blocked)
+        self.search_input.setCursorPosition(len(selected_text))
+        self.perform_search()
+
     def _set_search_text(self, text: str):
         '设置搜索框文本并执行搜索'
         if self.is_closing:
@@ -1844,9 +1847,13 @@ class MainWindow(QMainWindow):
             return
 
     def perform_search(self):
-        text = self.search_input.text()
+        text = self.search_input.text().strip()
         if not text:
             return
+
+        normalized_text = self.completer.get_english(text)
+        if normalized_text and normalized_text != text:
+            text = normalized_text
 
         case = self.case_check.isChecked()
         regex = self.regex_check.isChecked()
@@ -1865,7 +1872,7 @@ class MainWindow(QMainWindow):
                     import re
                     found = bool(re.search(search_for, search_in))
                 except re.error as e:
-                    self.status_label.setText(f"姝ｅ垯琛ㄨ揪寮忔棤鏁? {e}")
+                    self.status_label.setText(f"正则表达式无效: {e}")
                     return
             else:
                 found = search_for in search_in
@@ -1882,7 +1889,7 @@ class MainWindow(QMainWindow):
                 self.search_table.setItem(row, 1, QTableWidgetItem(f"{parsed['date']} {parsed['time']}" if parsed else ""))
                 self.search_table.setItem(row, 2, QTableWidgetItem(line[:300]))
 
-        self.search_count.setText(f"{len(self.search_results)} 鏉?")
+        self.search_count.setText(f"{len(self.search_results)} 条")
 
     def clear_search(self):
         self.search_results = []
@@ -1939,7 +1946,7 @@ class MainWindow(QMainWindow):
         selected_rows = set(idx.row() for idx in self.search_table.selectedIndexes())
         
         if selected_rows:
-            add = menu.addAction(f"娣诲姞鍒板伐浣滃尯 ({len(selected_rows)} 鏉?")
+            add = menu.addAction(f"添加到工作区 ({len(selected_rows)} 条)")
             add.triggered.connect(lambda: self.add_search_results_to_workspace(selected_rows))
             
             copy = menu.addAction('复制内容')
@@ -1994,8 +2001,8 @@ class MainWindow(QMainWindow):
             output_dir = self.app_config.workspace_dir()
             output_dir.mkdir(parents=True, exist_ok=True)
             path = output_dir / filename.replace(" ", "_").replace("/", "_")
-            path.write_text(text, encoding='utf-8')
-            QMessageBox.information(self, '保存成功', f"宸蹭繚瀛樿嚦:\n{path}")
+            write_text_file(path, text)
+            QMessageBox.information(self, '保存成功', f"已保存至:\n{path}")
 
     def clear_log(self):
         if self.log_lines and QMessageBox.question(self, '确认', '确定要清空所有日志吗?') != QMessageBox.StandardButton.Yes:
@@ -2016,7 +2023,7 @@ class MainWindow(QMainWindow):
             self.status_label.setText('请选择设备后再拉取日志')
             return
         if self.config_puller and self.config_puller.isRunning():
-            self.status_label.setText("鏃ュ織姝ｅ湪鎷夊彇涓?..")
+            self.status_label.setText("日志正在拉取中...")
             return
 
         try:
@@ -2027,7 +2034,7 @@ class MainWindow(QMainWindow):
 
         destination = self.app_config.log_dir()
         self.pull_config_btn.setEnabled(False)
-        self.status_label.setText(f"姝ｅ湪鎷夊彇鏃ュ織鍒?{destination}")
+        self.status_label.setText(f"正在拉取日志到 {destination}")
         self.config_puller = ClientLoggingPuller(self.current_device, remote_path, destination)
         self.config_puller.completed.connect(self.on_config_pull_completed)
         self.config_puller.failed.connect(self.on_config_pull_failed)
@@ -2037,12 +2044,12 @@ class MainWindow(QMainWindow):
     def on_config_pull_completed(self, destination):
         if self.is_closing:
             return
-        self.status_label.setText(f"鏃ュ織宸叉媺鍙栧埌 {destination}")
+        self.status_label.setText(f"日志已拉取到 {destination}")
 
     def on_config_pull_failed(self, message):
         if self.is_closing:
             return
-        self.status_label.setText(f"鏃ュ織鎷夊彇澶辫触: {message}")
+        self.status_label.setText(f"日志拉取失败: {message}")
 
     def on_config_pull_finished(self):
         if self.is_closing:
@@ -2060,14 +2067,14 @@ class MainWindow(QMainWindow):
         output_dir = self.app_config.log_dir()
         output_dir.mkdir(parents=True, exist_ok=True)
         path = output_dir / filename
-        path.write_text('\n'.join(lines), encoding='utf-8')
-        QMessageBox.information(self, '保存成功', f"宸蹭繚瀛?{len(lines)} 琛屾棩蹇楄嚦:\n{path}")
+        write_text_file(path, '\n'.join(lines))
+        QMessageBox.information(self, '保存成功', f"已保存 {len(lines)} 行日志至:\n{path}")
 
     def closeEvent(self, event):
         try:
             self.shutdown_background_work()
         except Exception as e:
-            print(f"鍏抽棴娓呯悊澶辫触: {e}")
+            print(f"关闭清理失败: {e}")
         finally:
             event.accept()
 

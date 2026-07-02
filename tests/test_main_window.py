@@ -7,7 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QListView
 
-from main import DarkComboBox, DeviceRefreshWorker, MainWindow
+from main import DarkComboBox, DeviceRefreshWorker, MainWindow, ProtocolDialog, ProtocolManager
 
 
 class BrokenSignal:
@@ -138,6 +138,23 @@ class MainWindowWorkspaceTest(unittest.TestCase):
             "输入关键字或协议名（支持中英文，如 promo）...",
         )
 
+    def test_search_results_area_uses_readable_chinese_labels(self):
+        self.window = MainWindow()
+
+        headers = [
+            self.window.search_table.horizontalHeaderItem(i).text()
+            for i in range(self.window.search_table.columnCount())
+        ]
+
+        self.assertEqual(headers, ["行号", "时间", "内容"])
+        self.assertEqual(self.window.search_count.text(), "0 条")
+
+        self.window.log_buffer.extend(["07-01 20:31:40 123 456 I Unity: hello"])
+        self.window.search_input.setText("missing")
+        self.window.perform_search()
+
+        self.assertEqual(self.window.search_count.text(), "0 条")
+
     def test_protocol_completer_displays_and_parses_arrow_separator(self):
         self.window = MainWindow()
         self.window.protocol_manager.protocols = {"促销列表": "GetPromoList"}
@@ -147,7 +164,34 @@ class MainWindowWorkspaceTest(unittest.TestCase):
 
         self.assertEqual(display_text, "促销列表 → GetPromoList")
         self.assertEqual(self.window.completer.get_english(display_text), "GetPromoList")
+        self.window.log_buffer.extend([
+            "07-01 20:31:40 123 456 I Unity: request GetPromoList finished",
+        ])
         self.window.on_protocol_selected(display_text)
+        self.assertEqual(self.window.search_input.text(), display_text)
+        self.assertEqual(len(self.window.search_results), 1)
+
+    def test_protocol_dialog_count_label_uses_readable_chinese(self):
+        manager = ProtocolManager()
+        manager.protocols = {"促销列表": "GetPromoList"}
+        dialog = ProtocolDialog(manager)
+        self.window = dialog
+
+        self.assertEqual(dialog.count_label.text(), "共 1 条")
+
+    def test_search_normalizes_protocol_display_text_before_matching_logs(self):
+        self.window = MainWindow()
+        self.window.protocol_manager.protocols = {"促销列表": "GetPromoList"}
+        self.window.log_buffer.extend([
+            "07-01 20:31:40 123 456 I Unity: request GetPromoList finished",
+        ])
+
+        for display_text in ("促销列表 → GetPromoList", "促销列表→GetPromoList"):
+            self.window.search_input.setText(display_text)
+            self.window.perform_search()
+
+            self.assertEqual(self.window.search_input.text(), display_text)
+            self.assertEqual(len(self.window.search_results), 1)
 
     def test_device_refresh_worker_parses_only_ready_devices(self):
         worker = DeviceRefreshWorker(connect_addresses=[])
